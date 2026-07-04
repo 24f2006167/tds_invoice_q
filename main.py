@@ -21,7 +21,6 @@ class InvoiceInput(BaseModel):
 
 
 def search_patterns(patterns, text):
-    """Return first regex match."""
     for pattern in patterns:
         m = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
         if m:
@@ -30,23 +29,24 @@ def search_patterns(patterns, text):
 
 
 def money(value):
-    """Convert money string to float."""
     if value is None:
         return None
 
     value = value.replace(",", "")
-    value = re.sub(r"(Rs\.?|INR|₹)", "", value, flags=re.IGNORECASE)
-    value = value.strip()
 
-    m = re.search(r"[-+]?\d*\.?\d+", value)
+    value = re.sub(
+        r"(Rs\.?|INR|USD|EUR|GBP|AED|AUD|CAD|JPY|₹|\$|€|£)",
+        "",
+        value,
+        flags=re.IGNORECASE,
+    )
+
+    m = re.search(r"\d+(?:\.\d+)?", value)
 
     if not m:
         return None
 
-    try:
-        return float(m.group())
-    except:
-        return None
+    return float(m.group())
 
 
 @app.post("/extract")
@@ -64,6 +64,8 @@ def extract(data: InvoiceInput):
         r"Invoice\s*[:#-]?\s*([A-Za-z0-9\-\/]+)",
         r"Bill\s*No\.?\s*[:#-]?\s*([A-Za-z0-9\-\/]+)",
         r"Bill\s*Number\s*[:#-]?\s*([A-Za-z0-9\-\/]+)",
+        r"Ref\.?\s*[:#-]?\s*([A-Za-z0-9\-\/]+)",
+        r"Reference\s*[:#-]?\s*([A-Za-z0-9\-\/]+)"
     ]
 
     invoice_no = search_patterns(invoice_patterns, text)
@@ -75,7 +77,9 @@ def extract(data: InvoiceInput):
         r"Supplier\s*[:\-]?\s*(.+)",
         r"Seller\s*[:\-]?\s*(.+)",
         r"Sold\s*By\s*[:\-]?\s*(.+)",
-        r"Company\s*[:\-]?\s*(.+)"
+        r"Company\s*[:\-]?\s*(.+)",
+        r"Client\s*[:\-]?\s*(.+)",
+        r"From\s*[:\-]?\s*(.+)"
     ]
 
     vendor = search_patterns(vendor_patterns, text)
@@ -87,6 +91,7 @@ def extract(data: InvoiceInput):
 
     date_patterns = [
         r"Invoice\s*Date\s*[:\-]?\s*(.+)",
+        r"Issued\s*[:\-]?\s*(.+)",
         r"Date\s*[:\-]?\s*(.+)",
         r"Dated\s*[:\-]?\s*(.+)"
     ]
@@ -112,15 +117,18 @@ def extract(data: InvoiceInput):
         r"Subtotal\s*[:\-]?\s*(.+)",
         r"Sub\s*Total\s*[:\-]?\s*(.+)",
         r"Taxable\s*Amount\s*[:\-]?\s*(.+)",
-        r"Amount\s*Before\s*Tax\s*[:\-]?\s*(.+)"
+        r"Taxable\s*Value\s*[:\-]?\s*(.+)",
+        r"Amount\s*Before\s*Tax\s*[:\-]?\s*(.+)",
+        r"Basic\s*Amount\s*[:\-]?\s*(.+)",
+        r"Net\s*Amount\s*[:\-]?\s*(.+)",
+        r"Net\s*Payable\s*[:\-]?\s*(.+)",
+        r"Amount\s*[:\-]?\s*(.+)"
     ]
 
     subtotal = search_patterns(amount_patterns, text)
     amount = money(subtotal)
 
     # ---------------- Tax ----------------
-
-    tax = None
 
     cgst = money(search_patterns([r"CGST.*?([\d,]+\.\d+)"], text))
     sgst = money(search_patterns([r"SGST.*?([\d,]+\.\d+)"], text))
@@ -131,12 +139,37 @@ def extract(data: InvoiceInput):
         tax_patterns = [
             r"GST.*?([\d,]+\.\d+)",
             r"IGST.*?([\d,]+\.\d+)",
+            r"VAT.*?([\d,]+\.\d+)",
+            r"Sales\s*Tax.*?([\d,]+\.\d+)",
             r"Tax.*?([\d,]+\.\d+)"
         ]
 
         tax = money(search_patterns(tax_patterns, text))
 
-    # ---------------- Response ----------------
+    # ---------------- Currency ----------------
+
+    currency_patterns = [
+        r"Currency\s*[:\-]?\s*([A-Z]{3})",
+        r"\b(INR|USD|EUR|GBP|AED|AUD|CAD|JPY)\b",
+        r"₹",
+        r"\$",
+        r"€",
+        r"£"
+    ]
+
+    currency = search_patterns(currency_patterns, text)
+
+    if currency == "₹":
+        currency = "INR"
+    elif currency == "$":
+        currency = "USD"
+    elif currency == "€":
+        currency = "EUR"
+    elif currency == "£":
+        currency = "GBP"
+
+    if currency is None:
+        currency = "INR"
 
     return {
         "invoice_no": invoice_no,
@@ -144,5 +177,5 @@ def extract(data: InvoiceInput):
         "vendor": vendor,
         "amount": amount,
         "tax": tax,
-        "currency": "INR"
+        "currency": currency
     }
